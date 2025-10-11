@@ -537,14 +537,14 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		}
 	
 		// Only try to match a word from the hovered char forward
-		const match = this.getForwardMatchedWord(text, offset);
-		if (!match) {
+		const matches = this.getForwardMatchedWords(text, offset);
+		if (!matches.length) {
 			this.hideHoverBox();
 			return;
 		}
 
 		const start = offset;
-		const end = Math.min(match.end, textNode.length); // clamps safely
+		const end = Math.min(Math.max(...matches.map(({ end }) => end)), textNode.length); // clamps safely
 
 		// Highlight matched word
 		const rangeForWord = document.createRange();
@@ -562,12 +562,15 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		}
 
 		if (this.settings.saveSentences) {
-			const sentence = this.extractSentenceFromTextAtOffset(text, offset, match.word);
+			const sentence = this.extractSentenceFromTextAtOffset(text, offset, matches[0].word);
 			this.activeExampleSentence = sentence;
 		}
 
 		// Tooltip
-		this.showTooltipForWord(match.word, rect.left + window.scrollX, rect.top + window.scrollY);
+		this.showTooltipForWord(
+			matches[0].word,
+			matches.map(({ entry }) => entry)
+		);
 	};
 	
 	private hideHoverBox() {
@@ -575,28 +578,32 @@ export default class ZhongwenReaderPlugin extends Plugin {
 			this.hoverBoxEl.style.display = "none";
 		}
 	}
-	
-	private getForwardMatchedWord(text: string, offset: number): { word: string; end: number } | null {
+
+	private getForwardMatchedWords(
+		text: string,
+		offset: number
+	): { entry: CedictEntry; word: string; end: number }[] {
 		const maxWordLen = 5;
 		const substr = text.slice(offset, offset + maxWordLen);
-	
+		const matches: { entry: CedictEntry; word: string; end: number }[] = [];
+
 		// Try longest to shortest
 		for (let len = maxWordLen; len > 0; len--) {
 			const candidate = substr.slice(0, len);
-			if (this.cedictMap.has(candidate)) {
-				return { word: candidate, end: offset + len };
+			const entries = this.cedictMap.get(candidate) ?? [];
+
+			for (const entry of entries) {
+				matches.push({ entry, word: candidate, end: offset + len });
 			}
 		}
 
-		return null;
-	};	
-	  
-	
-	private showTooltipForWord(word: string, x: number, y: number) {
+		return matches;
+	}
+
+	private showTooltipForWord(word: string, entries: CedictEntry[]) {
 		if (!this.tooltipEl) return;
-	
-		const entries = this.cedictMap.get(word);
-		if (!entries || entries.length === 0) {
+
+        if (entries.length === 0) {
 			this.tooltipEl.style.display = "none";
 			return;
 		}
@@ -613,18 +620,95 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		this.activeWord = word;
 		this.activeEntries = uniqueEntries;
 
-		const text = uniqueEntries.map(entry => {
-			const pinyinInfo = this.processPinyin(entry.pinyin);
-			return `${entry.simplified} ${entry.simplified !== entry.traditional ? entry.traditional : ""} (${pinyinInfo.accentedPinyin} / ${pinyinInfo.bopomofo})\n${entry.definitions.join('; ')}`;
-		}).join('\n\n');
+		const entryNodes = uniqueEntries.map((entry) => this.renderEntry(entry));
+		const tooltipInner = createDiv("cedict-word-list");
+		tooltipInner.replaceChildren(...entryNodes);
 
-		this.tooltipEl.innerText = text;
+		this.tooltipEl.replaceChildren(tooltipInner);
 		if (!this.hoverBoxEl) return; // Feel like I dont need this? 
 		const hoverRect = this.hoverBoxEl.getBoundingClientRect();
 		this.tooltipEl.style.left = `${hoverRect.left + window.scrollX}px`;
-		this.tooltipEl.style.top = `${hoverRect.bottom + window.scrollY + 4}px`; // 4px padding
+		this.tooltipEl.style.top = `${hoverRect.bottom + window.scrollY + 8}px`; // 8px padding
 
 		this.tooltipEl.style.display = "block";
+	}
+
+	public renderEntry(entry: CedictEntry): HTMLElement {
+		const outer = createDiv("cedict-entry");
+		outer.replaceChildren(this.renderHeadword(entry), this.renderDefinition(entry));
+
+		return outer;
+	}
+
+	private renderHeadword(entry: CedictEntry): HTMLElement {
+		const outer = createDiv("cedict-headword");
+		const charactersNode = outer.createDiv("cedict-headword-characters");
+		charactersNode.appendChild(this.renderCharacters(entry.simplified, entry.pinyin));
+
+		if (entry.traditional !== entry.simplified) {
+			const traditionalSpan = createSpan("cedict-headword-traditional");
+			traditionalSpan.replaceChildren(
+				"(",
+				this.renderCharacters(entry.traditional, entry.pinyin),
+				")"
+			);
+
+			charactersNode.appendChild(traditionalSpan);
+		}
+
+		outer.appendChild(this.renderPronunciation(entry));
+
+		return outer;
+	}
+
+	private renderCharacters(characters: string, pinyin: string): HTMLElement {
+		const outer = createSpan();
+		const words = pinyin.split(" ");
+
+		characters.split("").forEach((character, idx) => {
+			outer.createSpan({
+				cls: this.getToneClass(words[idx]),
+				text: character,
+			});
+		});
+
+		return outer;
+	}
+
+	private renderPronunciation(entry: CedictEntry): HTMLElement {
+		const outer = createSpan("cedict-headword-pronunciation");
+		const pinyinSurround = outer.createSpan("cedict-headword-pinyin");
+		const bopomofoSurround = outer.createSpan("cedict-headword-bopomofo");
+
+		const { accentedPinyin, bopomofo } = this.processPinyin(entry.pinyin);
+		const words = entry.pinyin.split(" ");
+
+		accentedPinyin.split(" ").forEach((accentedWord, idx) => {
+			pinyinSurround.createSpan({
+				cls: this.getToneClass(words[idx]),
+				text: accentedWord,
+			});
+		});
+
+		bopomofo.split(" ").forEach((bopomofoWord, idx) => {
+			bopomofoSurround.createSpan({
+				cls: this.getToneClass(words[idx]),
+				text: bopomofoWord,
+			});
+		});
+
+		return outer;
+	}
+
+	private getToneClass(pinyin: string): string {
+		return `cedict-tone-${pinyin.replace(/[^\d]*/, "") || "5"}`;
+	}
+
+	private renderDefinition(entry: CedictEntry): HTMLElement {
+		return createDiv({
+			cls: "cedict-definition",
+			text: entry.definitions.join("; "),
+		});
 	}
 
 	public processPinyin(pinyin: string): { accentedPinyin: string; bopomofo: string } {
@@ -930,13 +1014,6 @@ class VocabSidebarView extends ItemView {
 	}
 
 	async onOpen() {
-		// const container = this.containerEl;
-		// const content = container.querySelector(".view-content") ?? container.children[1];
-		// content.empty();
-		const container = this.containerEl;
-		container.querySelectorAll(".vocab-entry").forEach(el => el.remove());
-
-	
 		// Register the refresh callback
 		this.plugin.refreshVocabSidebar = () => this.renderSidebar();
 	
@@ -981,34 +1058,12 @@ class VocabSidebarView extends ItemView {
 			container.createEl("p", { text: "No vocab yet." });
 			return;
 		}
-	
+
+		const wordList = container.createDiv("cedict-word-list");
+
 		for (const entry of matchingVocab) {
-			const wrapper = container.createEl("div", { cls: "vocab-entry" });
-	
-			// Title: simplified + traditional
-			wrapper.createEl("div", {
-				text: `${entry.simplified} ${entry.simplified !== entry.traditional ? "(" + entry.traditional + ")": ""}`,
-				cls: 'vocab-word'
-			});
-	
-			// Pinyin and Bopomofo
-			const pinyinInfo = this.plugin.processPinyin?.(entry.pinyin ?? "");
-			const pinyinDisplay = pinyinInfo
-				? `${pinyinInfo.accentedPinyin} / ${pinyinInfo.bopomofo}`
-				: (entry.pinyin ?? "");
-			wrapper.createEl("div", {
-				text: pinyinDisplay,
-				cls: 'vocab-pinyin'
-			});
-	
-			// Definitions
-			wrapper.createEl("div", {
-				text: entry.definitions.join(";\n "),
-				cls: 'vocab-defs'
-			});
-	
-			// Divider
-			// wrapper.createEl("hr");
+			const wrapper = this.plugin.renderEntry(entry);
+			wordList.appendChild(wrapper);
 
 			// Make wrapper clickable
 			wrapper.onclick = () => {

@@ -13,41 +13,55 @@
 .cm-line {
     transition: all 0.5s ease;
 }
-.vocab-entry {
-    margin-bottom: 1rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--background-modifier-border);
-    cursor: pointer;
-}
-.vocab-word {
-    font-weight: bold;
-    font-size: 1.1em;
-}
-.vocab-pinyin {
-    font-style: italic;
-    color: var(--text-muted);
-    margin-top: 2px;
-}
-.vocab-defs {
-    margin-top: 4px;
-    color: var(--text-normal);
-    font-size: 0.95em;
-    line-height: 1.4;
-}
 .cedict-tooltip {
     position: absolute;
-    padding: 6px 10px;
-    background: var(--background-secondary);
+    padding: 10px 14px;
+    background: var(--background-primary-alt);
     color: var(--text-normal);
-    border: 1px solid var(--background-modifier-border);
+    border: 2px solid var(--background-modifier-border);
     border-radius: 6px;
-    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
     white-space: pre-line;
     z-index: 10000;
     pointer-events: none;
     display: none;
+    max-width: 500px;
+}
+.cedict-word-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    cursor: pointer;
+}
+.cedict-entry:not(:last-child) {
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--background-modifier-border);
 }
 
+.cedict-headword {
+}
+.cedict-headword-characters {
+    font-size: 175%;
+    display: flex;
+    gap: 8px;
+}
+.cedict-headword-traditional {
+    color: var(--text-muted);
+}
+.cedict-headword-pronunciation {
+    margin-top: -1px;
+    display: flex;
+    gap: 8px;
+}
+.cedict-headword-pinyin {
+}
+.cedict-headword-bopomofo {
+}
+.cedict-definition {
+    margin-top: 4px;
+    font-size: 90%;
+    line-height: 1.4;
+}
 
 
 .hsk-highlight {
@@ -87,6 +101,21 @@
     color: #c742c4;
 }
 
+.cedict-tone-1 {
+    color: color-mix(in srgb, var(--color-red) 85%, black);
+}
+.cedict-tone-2 {
+    color: color-mix(in srgb, var(--color-yellow) 85%, black);
+}
+.cedict-tone-3 {
+    color: color-mix(in srgb, var(--color-green) 85%, black);
+}
+.cedict-tone-4 {
+    color: color-mix(in srgb, var(--color-blue) 85%, black);
+}
+.cedict-tone-5 {
+    color: var(--color-base-60);
+}
 
 
 .zh-hidden {
