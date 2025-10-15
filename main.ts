@@ -592,6 +592,26 @@ export default class ZhongwenReaderPlugin extends Plugin {
 			const candidate = substr.slice(0, len);
 			const entries = this.cedictMap.get(candidate) ?? [];
 
+            const firstMatchEntry = matches[0]?.entry
+            if (firstMatchEntry) {
+                // Order by similarity to the first match, so that where there are multiple entries for the first character
+                // of a word (eg with differing tone), the most relevant one appears first
+
+                entries.sort((entryA, entryB) => {
+                    const similarityA =
+                        (firstMatchEntry.simplified.startsWith(entryA.simplified) ? 1 : 0) +
+                        (firstMatchEntry.traditional.startsWith(entryA.traditional) ? 1 : 0) +
+                        (firstMatchEntry.pinyin.startsWith(entryA.pinyin) ? 1 : 0)
+                    const similarityB =
+                        (firstMatchEntry.simplified.startsWith(entryB.simplified) ? 1 : 0) +
+                        (firstMatchEntry.traditional.startsWith(entryB.traditional) ? 1 : 0) +
+                        (firstMatchEntry.pinyin.startsWith(entryB.pinyin) ? 1 : 0)
+
+                    // Most similar first
+                    return similarityB - similarityA
+                })
+            }
+            
 			for (const entry of entries) {
 				matches.push({ entry, word: candidate, end: offset + len });
 			}
