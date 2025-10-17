@@ -206,6 +206,18 @@ export default class ZhongwenReaderPlugin extends Plugin {
 			callback: () => this.exportVocabToFlashcards()
 		});
 
+        this.addCommand({
+            id: "create-flashcards",
+            name: "Create flashcards for the highlighted word",
+            editorCheckCallback: (checking, editor) => {
+                if (this.activeEntries?.length) {
+                    if (!checking) this.createFlashcardsForActiveEntries(editor);
+                    return true;
+                }
+                return false;
+            }
+        });
+
 		this.registerView(
 			VIEW_TYPE_VOCAB_SIDEBAR,
 			(leaf) => new VocabSidebarView(leaf, this)
@@ -495,7 +507,25 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		
 		editor.setValue(text);
 	}
-	  
+
+    private createFlashcardsForActiveEntries(editor: Editor) {
+        const lines =  (this.activeEntries ?? []).map(entry => {
+            const exampleSentence = this.activeExampleSentence ?? entry.simplified
+            const word = exampleSentence.includes(entry.simplified) ? entry.simplified : entry.traditional
+            const question = this.activeExampleSentence!
+                .replaceAll(word, `<span class="cedict-flashcard-word">${word}</span>`)
+            const characters = this.renderCharacters(word, entry.pinyin).innerHTML
+            const pinyin = this.renderPinyin(entry).innerHTML
+            const definition = this.renderDefinition(entry).innerHTML
+
+            return `${question}::${characters}    ${pinyin}    ${definition}`
+        })
+
+        const lastLine = editor.lastLine();
+        editor.replaceRange(lines.join("\n"), { line: lastLine + 1, ch: 0 });
+
+        new Notice(`Created ${lines.length} ${lines.length === 1 ? "flashcard" : "flashcards"}`);
+    }
 
 	private hoverHandlerChars = (event: MouseEvent) => {
 		const el = event.target as HTMLElement;
@@ -697,28 +727,42 @@ export default class ZhongwenReaderPlugin extends Plugin {
 
 	private renderPronunciation(entry: CedictEntry): HTMLElement {
 		const outer = createSpan("cedict-headword-pronunciation");
-		const pinyinSurround = outer.createSpan("cedict-headword-pinyin");
-		const bopomofoSurround = outer.createSpan("cedict-headword-bopomofo");
-
-		const { accentedPinyin, bopomofo } = this.processPinyin(entry.pinyin);
-		const words = entry.pinyin.split(" ");
-
-		accentedPinyin.split(" ").forEach((accentedWord, idx) => {
-			pinyinSurround.createSpan({
-				cls: this.getToneClass(words[idx]),
-				text: accentedWord,
-			});
-		});
-
-		bopomofo.split(" ").forEach((bopomofoWord, idx) => {
-			bopomofoSurround.createSpan({
-				cls: this.getToneClass(words[idx]),
-				text: bopomofoWord,
-			});
-		});
+        outer.appendChild(this.renderPinyin(entry))
+        outer.appendChild(this.renderBopomofo(entry))
 
 		return outer;
 	}
+
+    private renderPinyin(entry: CedictEntry): HTMLElement {
+        const pinyinSurround = createSpan("cedict-headword-pinyin");
+
+        const { accentedPinyin } = this.processPinyin(entry.pinyin);
+        const words = entry.pinyin.split(" ");
+
+        accentedPinyin.split(" ").forEach((accentedWord, idx) => {
+            pinyinSurround.createSpan({
+                cls: this.getToneClass(words[idx]),
+                text: accentedWord,
+            });
+        });
+
+        return pinyinSurround;
+    }
+
+    private renderBopomofo(entry: CedictEntry): HTMLElement {
+        const bopomofoSurround = createSpan("cedict-headword-bopomofo");
+        const { bopomofo } = this.processPinyin(entry.pinyin);
+        const words = entry.pinyin.split(" ");
+
+        bopomofo.split(" ").forEach((bopomofoWord, idx) => {
+            bopomofoSurround.createSpan({
+                cls: this.getToneClass(words[idx]),
+                text: bopomofoWord,
+            });
+        });
+
+        return bopomofoSurround;
+    }
 
 	private getToneClass(pinyin: string): string {
 		return `cedict-tone-${pinyin.replace(/[^\d]*/, "") || "5"}`;
