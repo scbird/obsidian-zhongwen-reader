@@ -218,6 +218,19 @@ export default class ZhongwenReaderPlugin extends Plugin {
             }
         });
 
+        this.addCommand({
+            id: "create-flashcard-for-selection",
+            name: "Create flashcard for selected text",
+            editorCheckCallback: (checking, editor) => {
+                const selection = editor.getSelection();
+                if (selection && selection.length > 0) {
+                    if (!checking) this.createFlashcardForSelection(editor, selection);
+                    return true;
+                }
+                return false;
+            }
+        });
+
 		this.registerView(
 			VIEW_TYPE_VOCAB_SIDEBAR,
 			(leaf) => new VocabSidebarView(leaf, this)
@@ -529,6 +542,74 @@ export default class ZhongwenReaderPlugin extends Plugin {
         editor.replaceRange(`${lines.join("\n")}\n`, { line: lastLine + 1, ch: 0 });
 
         new Notice(`Created ${lines.length} ${lines.length === 1 ? "flashcard" : "flashcards"}`);
+    }
+
+
+    /**
+     * Segments the text into the largest matching words from the dictionary, including non-Chinese chars as-is.
+     */
+    private segmentTextWithDictionary(text: string): { word: string, entry?: CedictEntry }[] {
+        const result: { word: string, entry?: CedictEntry }[] = [];
+        let i = 0;
+        while (i < text.length) {
+            // Try longest match first
+            let found = false;
+            for (let len = Math.min(5, text.length - i); len > 0; len--) {
+                const candidate = text.slice(i, i + len);
+                const entries = this.cedictMap.get(candidate);
+                if (entries && entries.length > 0) {
+                    result.push({ word: candidate, entry: entries[0] });
+                    i += len;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                // Not a Chinese word, just add the character as-is
+                result.push({ word: text[i] });
+                i++;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Create a flashcard for the selected text, appending to the bottom of the note.
+     */
+    private createFlashcardForSelection(editor: Editor, selection: string) {
+        // Get the full sentence (current line)
+        const cursor = editor.getCursor();
+        const lineText = editor.getLine(cursor.line);
+        // Highlight the selected text in the sentence
+        const highlightedSentence = lineText.replace(selection, `<span class="cedict-flashcard-word">${selection}</span>`);
+        // Segment the selected text
+        const segments = this.segmentTextWithDictionary(selection);
+        const charParts: string[] = []
+        const pinyinParts: string[] = []
+
+        // Build back side: coloured Chinese chars and pinyin, non-Chinese chars plain
+        for (const seg of segments){
+            if (seg.entry) {
+                // Use renderCharacters and renderPinyin for formatting
+                charParts.push(this.renderCharacters(seg.word, seg.entry.pinyin).innerHTML);
+                pinyinParts.push(this.renderPinyin(seg.entry).innerHTML);
+            } else {
+                // Non-Chinese char, plain
+                charParts.push(seg.word);
+                // no pinyin for non-Chinese chars
+                pinyinParts.push(seg.word);
+            }
+        }
+        // Format: front::back
+        const flashcardLine = `${highlightedSentence}::${charParts.join("")}    ${pinyinParts.join("")}    `;
+
+        // Add a blank line if needed
+        if (!/\n$/.test(editor.getValue())) {
+            editor.replaceRange("\n", { line: editor.lastLine() + 1, ch: 0 });
+        }
+        // Append to bottom
+        editor.replaceRange(`${flashcardLine}\n`, { line: editor.lastLine() + 1, ch: 0 });
+        new Notice("Created flashcard for selected text.");
     }
 
 	private hoverHandlerChars = (event: MouseEvent) => {
