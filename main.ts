@@ -521,8 +521,12 @@ export default class ZhongwenReaderPlugin extends Plugin {
             return `${question}::${characters}    ${pinyin}    ${definition}`
         })
 
+        if (!/n$/.test(editor.getValue())) {
+            lines.unshift("")
+        }
+
         const lastLine = editor.lastLine();
-        editor.replaceRange(lines.join("\n"), { line: lastLine + 1, ch: 0 });
+        editor.replaceRange(`${lines.join("\n")}\n`, { line: lastLine + 1, ch: 0 });
 
         new Notice(`Created ${lines.length} ${lines.length === 1 ? "flashcard" : "flashcards"}`);
     }
@@ -854,7 +858,7 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		} catch {
 			list = [];
 		}
-	
+
 		const newSentence = (this.activeExampleSentence?.trim() === word ? "" : this.activeExampleSentence?.trim()) || "";
 		// I'm supposed to have a check earlier that turns "word" into "" but for some reason not working so I have ^
 		// Do i need the "" fallback?
