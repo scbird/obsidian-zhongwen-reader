@@ -62,7 +62,9 @@
     font-size: 90%;
     line-height: 1.4;
 }
-
+.cedict-flashcard-word {
+    background: var(--text-highlight-bg);
+}
 
 .hsk-highlight {
     padding: 0;
