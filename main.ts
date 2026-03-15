@@ -12,6 +12,7 @@ interface CedictEntry {
 
 interface ZhongwenReaderPluginSettings {
 	saveSentences: boolean;
+	toneColors: boolean;
 }
 
 // Entries in user vocab list .json
@@ -25,7 +26,8 @@ interface VocabEntry {
 };
 
 const DEFAULT_SETTINGS: ZhongwenReaderPluginSettings = {
-	saveSentences: false
+	saveSentences: false,
+	toneColors: false
 }
 
 // derived from https://gist.github.com/ttempe/4010474
@@ -721,6 +723,7 @@ export default class ZhongwenReaderPlugin extends Plugin {
 	}
 
 	private getToneClass(pinyin: string): string {
+		if (!this.settings.toneColors) return "";
 		return `cedict-tone-${pinyin.replace(/[^\d]*/, "") || "5"}`;
 	}
 
@@ -1113,6 +1116,16 @@ class ZhongwenReaderSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.saveSentences)
 				.onChange(async (value) => {
 					this.plugin.settings.saveSentences = value;
+					await this.plugin.saveSettings();
+		}));
+
+		new Setting(containerEl)
+			.setName("Tone colours")
+			.setDesc("Colour characters and pinyin by tone in the hover tooltip.")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.toneColors)
+				.onChange(async (value) => {
+					this.plugin.settings.toneColors = value;
 					await this.plugin.saveSettings();
 		}));
 	}
