@@ -115,7 +115,7 @@ export default class ZhongwenReaderPlugin extends Plugin {
 
 	private static readonly FLASHCARD_COMMAND_COUNT = 6;
 	private flashcardCommands: Command[] = [];
-	private flashcardOptions: Array<{ entry: CedictEntry; definition: string } | null> = [];
+	private flashcardOptions: Array<CedictEntry | null> = [];
 
 	private hoverHandler: (e: MouseEvent) => void;
 
@@ -221,12 +221,12 @@ export default class ZhongwenReaderPlugin extends Plugin {
                 id,
                 name: placeholder,
                 checkCallback: (checking: boolean) => {
-                    const opt = this.flashcardOptions[idx];
-                    if (!opt) return false;
+                    const entry = this.flashcardOptions[idx];
+                    if (!entry) return false;
                     if (!checking) {
                         const view = this.app.workspace.getActiveViewOfType(MarkdownView)
                             ?? this.currentMarkdownView;
-                        if (view) this.createFlashcardForEntry(view.editor, opt.entry, opt.definition);
+                        if (view) this.createFlashcardForEntry(view.editor, entry);
                         else new Notice("Open a markdown note first.");
                     }
                     return true;
@@ -538,21 +538,24 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		editor.setValue(text);
 	}
 
-    private createFlashcardForEntry(editor: Editor, entry: CedictEntry, definition: string) {
-        const exampleSentence = this.activeExampleSentence ?? entry.simplified;
+    private createFlashcardForEntry(editor: Editor, entry: CedictEntry) {
+        const exampleSentence = this.activeExampleSentence || entry.simplified;
         const word = exampleSentence.includes(entry.simplified) ? entry.simplified : entry.traditional;
         const question = exampleSentence
             .replaceAll(word, `<span class="cedict-flashcard-word">${word}</span>`);
         const characters = this.renderCharacters(word, entry.pinyin).innerHTML;
         const pinyin = this.renderPinyin(entry).innerHTML;
-        const definitionHtml = createDiv({ cls: "cedict-definition", text: definition }).innerHTML;
+        const definitionHtml = this.renderDefinition(entry).innerHTML;
 
         const line = `${question}::${characters}    ${pinyin}    ${definitionHtml}`;
         const prefix = /\n$/.test(editor.getValue()) ? "" : "\n";
 
-        const scroll = editor.getScrollInfo();
+        const scroller = this.currentMarkdownView?.containerEl.querySelector(".cm-scroller") as HTMLElement | null;
+        const scrollTop = scroller?.scrollTop ?? 0;
         editor.replaceRange(`${prefix}${line}\n`, { line: editor.lastLine() + 1, ch: 0 });
-        editor.scrollTo(scroll.left, scroll.top);
+        requestAnimationFrame(() => {
+            if (scroller) scroller.scrollTop = scrollTop;
+        });
 
         new Notice(`Created flashcard for ${entry.simplified}.`);
     }
@@ -616,14 +619,17 @@ export default class ZhongwenReaderPlugin extends Plugin {
         // Format: front::back
         const flashcardLine = `${highlightedSentence}::${charParts.join("")}    ${pinyinParts.join("")}    `;
 
-        const scroll = editor.getScrollInfo();
+        const scroller = this.currentMarkdownView?.containerEl.querySelector(".cm-scroller") as HTMLElement | null;
+        const scrollTop = scroller?.scrollTop ?? 0;
         // Add a blank line if needed
         if (!/\n$/.test(editor.getValue())) {
             editor.replaceRange("\n", { line: editor.lastLine() + 1, ch: 0 });
         }
         // Append to bottom
         editor.replaceRange(`${flashcardLine}\n`, { line: editor.lastLine() + 1, ch: 0 });
-        editor.scrollTo(scroll.left, scroll.top);
+        requestAnimationFrame(() => {
+            if (scroller) scroller.scrollTop = scrollTop;
+        });
         new Notice("Created flashcard for selected text.");
     }
 
@@ -688,10 +694,7 @@ export default class ZhongwenReaderPlugin extends Plugin {
 			this.hoverBoxEl.style.display = "block";
 		}
 
-		if (this.settings.saveSentences) {
-			const sentence = this.extractSentenceFromTextAtOffset(text, offset, matches[0].word);
-			this.activeExampleSentence = sentence;
-		}
+		this.activeExampleSentence = this.extractSentenceFromTextAtOffset(text, offset, matches[0].word);
 
 		// Tooltip
 		this.showTooltipForWord(
@@ -782,24 +785,22 @@ export default class ZhongwenReaderPlugin extends Plugin {
 	}
 
 	private refreshFlashcardCommandNames() {
-		const options: Array<{ entry: CedictEntry; definition: string }> = [];
+		const entries: CedictEntry[] = [];
 		const seen = new Set<string>();
 		if (this.activeEntries) {
 			for (const entry of this.activeEntries) {
-				for (const def of entry.definitions) {
-					if (seen.has(def)) continue;
-					seen.add(def);
-					options.push({ entry, definition: def });
-					if (options.length >= ZhongwenReaderPlugin.FLASHCARD_COMMAND_COUNT) break;
-				}
-				if (options.length >= ZhongwenReaderPlugin.FLASHCARD_COMMAND_COUNT) break;
+				const firstDef = entry.definitions[0];
+				if (!firstDef || seen.has(firstDef)) continue;
+				seen.add(firstDef);
+				entries.push(entry);
+				if (entries.length >= ZhongwenReaderPlugin.FLASHCARD_COMMAND_COUNT) break;
 			}
 		}
 		for (let i = 0; i < ZhongwenReaderPlugin.FLASHCARD_COMMAND_COUNT; i++) {
-			const opt = options[i] ?? null;
-			this.flashcardOptions[i] = opt;
-			if (opt && this.flashcardCommands[i]) {
-				this.flashcardCommands[i].name = `Create flashcard: ${opt.entry.simplified} — ${opt.definition}`;
+			const entry = entries[i] ?? null;
+			this.flashcardOptions[i] = entry;
+			if (entry && this.flashcardCommands[i]) {
+				this.flashcardCommands[i].name = `Create flashcard: ${entry.simplified} — ${entry.definitions[0]}`;
 			}
 		}
 	}
@@ -997,7 +998,6 @@ export default class ZhongwenReaderPlugin extends Plugin {
 				new Notice(`${word} is already in your vocab list.`);
 			}
 
-			this.activeExampleSentence = null;
 			this.refreshVocabSidebar?.();
 			return;
 		}
@@ -1025,7 +1025,6 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		new Notice(`Added ${word} to vocab list!`);
 
 		this.refreshVocabSidebar?.();
-		this.activeExampleSentence = null;
 	}
 
 	private async exportVocabToFlashcards() {
@@ -1060,7 +1059,6 @@ export default class ZhongwenReaderPlugin extends Plugin {
 	}	
 
 	private extractSentenceFromTextAtOffset(text: string, offset: number, word: string): string {
-		if (!this.settings.saveSentences) return "";
 		// Find punctuation boundaries around the word
 		const punctuation = /[。！？!?]/;
 	
