@@ -27,6 +27,10 @@
     display: none;
     max-width: 500px;
 }
+body:has(.modal-container) .cedict-tooltip,
+body:has(.modal-container) .cedict-hover-box {
+    display: none !important;
+}
 .cedict-word-list {
     display: flex;
     flex-direction: column;

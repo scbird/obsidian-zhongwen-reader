@@ -209,12 +209,17 @@ export default class ZhongwenReaderPlugin extends Plugin {
         this.addCommand({
             id: "create-flashcards",
             name: "Create flashcards for the highlighted word",
-            editorCheckCallback: (checking, editor) => {
-                if (this.activeEntries?.length) {
-                    if (!checking) this.createFlashcardsForActiveEntries(editor);
-                    return true;
+            callback: () => {
+                const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+                if (!view) {
+                    new Notice("Open a markdown note first.");
+                    return;
                 }
-                return false;
+                if (!this.activeEntries?.length) {
+                    new Notice("Hover over a Chinese word first.");
+                    return;
+                }
+                this.createFlashcardsForActiveEntries(view.editor);
             }
         });
 
@@ -525,7 +530,7 @@ export default class ZhongwenReaderPlugin extends Plugin {
         const lines =  (this.activeEntries ?? []).map(entry => {
             const exampleSentence = this.activeExampleSentence ?? entry.simplified
             const word = exampleSentence.includes(entry.simplified) ? entry.simplified : entry.traditional
-            const question = this.activeExampleSentence!
+            const question = exampleSentence
                 .replaceAll(word, `<span class="cedict-flashcard-word">${word}</span>`)
             const characters = this.renderCharacters(word, entry.pinyin).innerHTML
             const pinyin = this.renderPinyin(entry).innerHTML
@@ -534,7 +539,7 @@ export default class ZhongwenReaderPlugin extends Plugin {
             return `${question}::${characters}    ${pinyin}    ${definition}`
         })
 
-        if (!/n$/.test(editor.getValue())) {
+        if (!/\n$/.test(editor.getValue())) {
             lines.unshift("")
         }
 
@@ -628,9 +633,6 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		if (!range || range.startContainer.nodeType !== Node.TEXT_NODE) {
 			this.hideHoverBox();
 			this.hideTooltip();
-			this.activeHighlight = null;
-			this.activeWord = null;
-			this.activeEntries = null;
 			return;
 		}
 	
