@@ -25,7 +25,12 @@
     z-index: 10000;
     pointer-events: none;
     display: none;
-    max-width: 500px;
+    max-width: min(500px, calc(100vw - 16px));
+}
+/* Popup opened by tapping (mobile): interactive so definitions can be
+   tapped to create flashcards */
+.cedict-tooltip.cedict-tooltip-pinned {
+    pointer-events: auto;
 }
 body:has(.modal-container) .cedict-tooltip,
 body:has(.modal-container) .cedict-hover-box {
