@@ -119,6 +119,14 @@ export default class ZhongwenReaderPlugin extends Plugin {
 
 	private hoverHandler: (e: MouseEvent) => void;
 
+	// Tap (touch) support: track touches so we can tell taps from scrolls,
+	// and so the mouse handler can ignore the emulated mouse events that
+	// browsers fire after a touch.
+	private lastTouchTime = 0;
+	private touchStartX = 0;
+	private touchStartY = 0;
+	private touchStartTime = 0;
+
 	async onload() {
 		await this.loadSettings();
 
@@ -189,6 +197,16 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		this.hoverHandler = this.hoverHandlerChars.bind(this);
 		document.addEventListener("mousemove", this.hoverHandler);
 
+		this.registerDomEvent(document, "touchstart", (event: TouchEvent) => {
+			this.lastTouchTime = Date.now();
+			const touch = event.touches[0];
+			if (!touch) return;
+			this.touchStartX = touch.clientX;
+			this.touchStartY = touch.clientY;
+			this.touchStartTime = Date.now();
+		}, { capture: true, passive: true });
+		this.registerDomEvent(document, "touchend", this.tapHandlerChars, { capture: true, passive: true });
+
 		this.addCommand({
 			id: "save-current-hovered-word",
 			name: "Save hovered word to vocab list.",
@@ -223,12 +241,7 @@ export default class ZhongwenReaderPlugin extends Plugin {
                 checkCallback: (checking: boolean) => {
                     const entry = this.flashcardOptions[idx];
                     if (!entry) return false;
-                    if (!checking) {
-                        const view = this.app.workspace.getActiveViewOfType(MarkdownView)
-                            ?? this.currentMarkdownView;
-                        if (view) this.createFlashcardForEntry(view.editor, entry);
-                        else new Notice("Open a markdown note first.");
-                    }
+                    if (!checking) this.createFlashcardForActiveView(entry);
                     return true;
                 }
             });
@@ -538,7 +551,7 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		editor.setValue(text);
 	}
 
-    private createFlashcardForEntry(editor: Editor, entry: CedictEntry) {
+    private buildFlashcardLine(entry: CedictEntry): string {
         const exampleSentence = this.activeExampleSentence || entry.simplified;
         const word = exampleSentence.includes(entry.simplified) ? entry.simplified : entry.traditional;
         const question = exampleSentence
@@ -547,7 +560,41 @@ export default class ZhongwenReaderPlugin extends Plugin {
         const pinyin = this.renderPinyin(entry).innerHTML;
         const definitionHtml = this.renderDefinition(entry).innerHTML;
 
-        const line = `${question}::${characters}    ${pinyin}    ${definitionHtml}`;
+        return `${question}::${characters}    ${pinyin}    ${definitionHtml}`;
+    }
+
+    // In reading mode view.editor isn't attached to the document, so edits
+    // made through it are silently lost; write to the file directly instead.
+    private async createFlashcardForActiveView(entry: CedictEntry) {
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView)
+            ?? this.currentMarkdownView;
+        if (!view) {
+            new Notice("Open a markdown note first.");
+            return;
+        }
+
+        if (view.getMode() === "source") {
+            this.createFlashcardForEntry(view.editor, entry);
+            return;
+        }
+
+        const file = view.file;
+        if (!file) {
+            new Notice("Open a markdown note first.");
+            return;
+        }
+
+        const line = this.buildFlashcardLine(entry);
+        await this.app.vault.process(file, (data) => {
+            const prefix = /\n$/.test(data) ? "" : "\n";
+            return `${data}${prefix}${line}\n`;
+        });
+
+        new Notice(`Created flashcard for ${entry.simplified}.`);
+    }
+
+    private createFlashcardForEntry(editor: Editor, entry: CedictEntry) {
+        const line = this.buildFlashcardLine(entry);
         const prefix = /\n$/.test(editor.getValue()) ? "" : "\n";
 
         const scroller = this.currentMarkdownView?.containerEl.querySelector(".cm-scroller") as HTMLElement | null;
@@ -634,6 +681,10 @@ export default class ZhongwenReaderPlugin extends Plugin {
     }
 
 	private hoverHandlerChars = (event: MouseEvent) => {
+		// Ignore the emulated mouse events that follow a touch, so taps don't
+		// get double-handled and the tapped popup isn't hidden or repositioned.
+		if (Date.now() - this.lastTouchTime < 700) return;
+
 		const el = event.target as HTMLElement;
 		const isEditLine = el.closest(".cm-line");
 		const isPreviewBlock = el.closest(".markdown-preview-view")?.querySelector(".markdown-preview-sizer");
@@ -676,6 +727,65 @@ export default class ZhongwenReaderPlugin extends Plugin {
 			return;
 		}
 
+		this.presentWordAt(textNode, offset, text, matches);
+	};
+
+	// Tap-to-lookup for touch devices. Tapping a Chinese word shows the popup
+	// pinned (interactive, kept on screen); tapping anywhere else closes it.
+	private tapHandlerChars = (event: TouchEvent) => {
+		this.lastTouchTime = Date.now();
+		if (event.touches.length > 0) return; // another finger is still down
+
+		const touch = event.changedTouches[0];
+		if (!touch) return;
+
+		// Only treat short, stationary touches as taps (not scrolls or long-presses)
+		const movedDistance = Math.hypot(
+			touch.clientX - this.touchStartX,
+			touch.clientY - this.touchStartY
+		);
+		if (movedDistance > 10 || Date.now() - this.touchStartTime > 500) return;
+
+		const el = event.target instanceof HTMLElement ? event.target : null;
+
+		// Taps inside the popup are handled by the entries' own click handlers
+		if (el && this.tooltipEl?.contains(el)) return;
+
+		const isEditLine = el?.closest(".cm-line");
+		const isPreviewBlock = el?.closest(".markdown-preview-view")?.querySelector(".markdown-preview-sizer");
+		const isPreviewTarget = el?.closest(".el-p, .el-h1, .el-h2, .el-h3, .el-li, .el-blockquote, .el-table");
+
+		if (isEditLine || (isPreviewBlock && isPreviewTarget)) {
+			const range = document.caretRangeFromPoint(touch.clientX, touch.clientY);
+			if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
+				const textNode = range.startContainer as Text;
+				const offset = range.startOffset;
+				const text = textNode.textContent ?? "";
+
+				if (offset >= 0 && offset < text.length && /[一-鿿]/.test(text[offset])) {
+					const matches = this.getForwardMatchedWords(text, offset);
+					if (matches.length) {
+						this.presentWordAt(textNode, offset, text, matches, true);
+						return;
+					}
+				}
+			}
+		}
+
+		// Tapped outside a Chinese word: close the popup
+		this.hideHoverBox();
+		this.hideTooltip();
+	};
+
+	// Highlights the matched word and shows the tooltip for it. Shared by the
+	// mouse hover and tap handlers.
+	private presentWordAt(
+		textNode: Text,
+		offset: number,
+		text: string,
+		matches: { entry: CedictEntry; word: string; end: number }[],
+		pinned = false
+	) {
 		const start = offset;
 		const end = Math.min(Math.max(...matches.map(({ end }) => end)), textNode.length); // clamps safely
 
@@ -683,9 +793,9 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		const rangeForWord = document.createRange();
 		rangeForWord.setStart(textNode, start);
 		rangeForWord.setEnd(textNode, end);
-	
+
 		const rect = rangeForWord.getBoundingClientRect();
-	
+
 		if (this.hoverBoxEl) {
 			this.hoverBoxEl.style.left = `${rect.left + window.scrollX}px`;
 			this.hoverBoxEl.style.top = `${rect.top + window.scrollY}px`;
@@ -699,10 +809,11 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		// Tooltip
 		this.showTooltipForWord(
 			matches[0].word,
-			matches.map(({ entry }) => entry)
+			matches.map(({ entry }) => entry),
+			pinned
 		);
-	};
-	
+	}
+
 	private hideHoverBox() {
 		if (this.hoverBoxEl) {
 			this.hoverBoxEl.style.display = "none";
@@ -750,11 +861,11 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		return matches;
 	}
 
-	private showTooltipForWord(word: string, entries: CedictEntry[]) {
+	private showTooltipForWord(word: string, entries: CedictEntry[], pinned = false) {
 		if (!this.tooltipEl) return;
 
         if (entries.length === 0) {
-			this.tooltipEl.style.display = "none";
+			this.hideTooltip();
 			return;
 		}
 
@@ -771,17 +882,36 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		this.activeEntries = uniqueEntries;
 		this.refreshFlashcardCommandNames();
 
-		const entryNodes = uniqueEntries.map((entry) => this.renderEntry(entry));
+		const entryNodes = uniqueEntries.map((entry, idx) => {
+			const node = this.renderEntry(entry);
+			// Only reachable when the tooltip is pinned (tap mode); with the
+			// mouse the tooltip has pointer-events: none, so hover behaviour
+			// is unaffected.
+			node.addEventListener("click", () => {
+				this.createFlashcardForActiveView(uniqueEntries[idx]);
+			});
+			return node;
+		});
 		const tooltipInner = createDiv("cedict-word-list");
 		tooltipInner.replaceChildren(...entryNodes);
 
 		this.tooltipEl.replaceChildren(tooltipInner);
-		if (!this.hoverBoxEl) return; // Feel like I dont need this? 
+		this.tooltipEl.classList.toggle("cedict-tooltip-pinned", pinned);
+		if (!this.hoverBoxEl) return; // Feel like I dont need this?
 		const hoverRect = this.hoverBoxEl.getBoundingClientRect();
 		this.tooltipEl.style.left = `${hoverRect.left + window.scrollX}px`;
 		this.tooltipEl.style.top = `${hoverRect.bottom + window.scrollY + 8}px`; // 8px padding
 
 		this.tooltipEl.style.display = "block";
+
+		if (pinned) {
+			// Keep the popup on screen: shift it left if it would poke past
+			// the right edge of the viewport
+			const margin = 8;
+			const maxLeft = window.innerWidth - this.tooltipEl.offsetWidth - margin;
+			const clampedLeft = Math.max(margin, Math.min(hoverRect.left, maxLeft));
+			this.tooltipEl.style.left = `${clampedLeft + window.scrollX}px`;
+		}
 	}
 
 	private refreshFlashcardCommandNames() {
@@ -963,6 +1093,7 @@ export default class ZhongwenReaderPlugin extends Plugin {
 	private hideTooltip() {
 		if (this.tooltipEl) {
 			this.tooltipEl.style.display = "none";
+			this.tooltipEl.classList.remove("cedict-tooltip-pinned");
 		}
 	}
 	private async addToVocab(word: string, entries: CedictEntry[]) {
