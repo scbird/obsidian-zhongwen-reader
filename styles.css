@@ -25,6 +25,7 @@
     z-index: 10000;
     pointer-events: none;
     display: none;
+    min-width: min(300px, calc(100vw - 16px));
     max-width: min(500px, calc(100vw - 16px));
 }
 /* Popup opened by tapping (mobile): interactive so definitions can be
