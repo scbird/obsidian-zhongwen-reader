@@ -241,12 +241,7 @@ export default class ZhongwenReaderPlugin extends Plugin {
                 checkCallback: (checking: boolean) => {
                     const entry = this.flashcardOptions[idx];
                     if (!entry) return false;
-                    if (!checking) {
-                        const view = this.app.workspace.getActiveViewOfType(MarkdownView)
-                            ?? this.currentMarkdownView;
-                        if (view) this.createFlashcardForEntry(view.editor, entry);
-                        else new Notice("Open a markdown note first.");
-                    }
+                    if (!checking) this.createFlashcardForActiveView(entry);
                     return true;
                 }
             });
@@ -556,7 +551,7 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		editor.setValue(text);
 	}
 
-    private createFlashcardForEntry(editor: Editor, entry: CedictEntry) {
+    private buildFlashcardLine(entry: CedictEntry): string {
         const exampleSentence = this.activeExampleSentence || entry.simplified;
         const word = exampleSentence.includes(entry.simplified) ? entry.simplified : entry.traditional;
         const question = exampleSentence
@@ -565,7 +560,41 @@ export default class ZhongwenReaderPlugin extends Plugin {
         const pinyin = this.renderPinyin(entry).innerHTML;
         const definitionHtml = this.renderDefinition(entry).innerHTML;
 
-        const line = `${question}::${characters}    ${pinyin}    ${definitionHtml}`;
+        return `${question}::${characters}    ${pinyin}    ${definitionHtml}`;
+    }
+
+    // In reading mode view.editor isn't attached to the document, so edits
+    // made through it are silently lost; write to the file directly instead.
+    private async createFlashcardForActiveView(entry: CedictEntry) {
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView)
+            ?? this.currentMarkdownView;
+        if (!view) {
+            new Notice("Open a markdown note first.");
+            return;
+        }
+
+        if (view.getMode() === "source") {
+            this.createFlashcardForEntry(view.editor, entry);
+            return;
+        }
+
+        const file = view.file;
+        if (!file) {
+            new Notice("Open a markdown note first.");
+            return;
+        }
+
+        const line = this.buildFlashcardLine(entry);
+        await this.app.vault.process(file, (data) => {
+            const prefix = /\n$/.test(data) ? "" : "\n";
+            return `${data}${prefix}${line}\n`;
+        });
+
+        new Notice(`Created flashcard for ${entry.simplified}.`);
+    }
+
+    private createFlashcardForEntry(editor: Editor, entry: CedictEntry) {
+        const line = this.buildFlashcardLine(entry);
         const prefix = /\n$/.test(editor.getValue()) ? "" : "\n";
 
         const scroller = this.currentMarkdownView?.containerEl.querySelector(".cm-scroller") as HTMLElement | null;
@@ -859,10 +888,7 @@ export default class ZhongwenReaderPlugin extends Plugin {
 			// mouse the tooltip has pointer-events: none, so hover behaviour
 			// is unaffected.
 			node.addEventListener("click", () => {
-				const view = this.app.workspace.getActiveViewOfType(MarkdownView)
-					?? this.currentMarkdownView;
-				if (view) this.createFlashcardForEntry(view.editor, uniqueEntries[idx]);
-				else new Notice("Open a markdown note first.");
+				this.createFlashcardForActiveView(uniqueEntries[idx]);
 			});
 			return node;
 		});
