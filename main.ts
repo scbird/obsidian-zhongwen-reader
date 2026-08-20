@@ -261,6 +261,22 @@ export default class ZhongwenReaderPlugin extends Plugin {
             }
         });
 
+        // Also offer it in the selection context menu (long-press/tap the
+        // selection on mobile, right-click on desktop) — on mobile, opening
+        // the command palette dismisses the selection, so the command above
+        // can't be reached there.
+        this.registerEvent(
+            this.app.workspace.on("editor-menu", (menu, editor) => {
+                const selection = editor.getSelection();
+                if (!selection || selection.length === 0) return;
+                menu.addItem((item) => item
+                    .setTitle("Create flashcard for selection")
+                    .setIcon("book-open")
+                    .onClick(() => this.createFlashcardForSelection(editor, selection))
+                );
+            })
+        );
+
 		this.registerView(
 			VIEW_TYPE_VOCAB_SIDEBAR,
 			(leaf) => new VocabSidebarView(leaf, this)
@@ -551,6 +567,20 @@ export default class ZhongwenReaderPlugin extends Plugin {
 		editor.setValue(text);
 	}
 
+    // Whether this note already has a flashcard for one of the given word
+    // forms. A card's front includes the surrounding sentence, so compare
+    // against the back's first segment (the coloured characters), with the
+    // HTML stripped.
+    private noteHasFlashcardFor(content: string, words: string[]): boolean {
+        for (const line of content.split("\n")) {
+            const sep = line.indexOf("::");
+            if (sep === -1) continue;
+            const characters = line.slice(sep + 2).split("    ")[0].replace(/<[^>]+>/g, "");
+            if (words.includes(characters)) return true;
+        }
+        return false;
+    }
+
     private buildFlashcardLine(entry: CedictEntry): string {
         const exampleSentence = this.activeExampleSentence || entry.simplified;
         const word = exampleSentence.includes(entry.simplified) ? entry.simplified : entry.traditional;
@@ -585,15 +615,26 @@ export default class ZhongwenReaderPlugin extends Plugin {
         }
 
         const line = this.buildFlashcardLine(entry);
+        let duplicate = false;
         await this.app.vault.process(file, (data) => {
+            if (this.noteHasFlashcardFor(data, [entry.simplified, entry.traditional])) {
+                duplicate = true;
+                return data;
+            }
             const prefix = /\n$/.test(data) ? "" : "\n";
             return `${data}${prefix}${line}\n`;
         });
 
-        new Notice(`Created flashcard for ${entry.simplified}.`);
+        if (duplicate) new Notice(`${entry.simplified} already has a flashcard in this note.`);
+        else new Notice(`Created flashcard for ${entry.simplified}.`);
     }
 
     private createFlashcardForEntry(editor: Editor, entry: CedictEntry) {
+        if (this.noteHasFlashcardFor(editor.getValue(), [entry.simplified, entry.traditional])) {
+            new Notice(`${entry.simplified} already has a flashcard in this note.`);
+            return;
+        }
+
         const line = this.buildFlashcardLine(entry);
         const prefix = /\n$/.test(editor.getValue()) ? "" : "\n";
 
@@ -640,6 +681,11 @@ export default class ZhongwenReaderPlugin extends Plugin {
      * Create a flashcard for the selected text, appending to the bottom of the note.
      */
     private createFlashcardForSelection(editor: Editor, selection: string) {
+        if (this.noteHasFlashcardFor(editor.getValue(), [selection])) {
+            new Notice(`${selection} already has a flashcard in this note.`);
+            return;
+        }
+
         // Get the full sentence (current line)
         const cursor = editor.getCursor();
         const lineText = editor.getLine(cursor.line);
